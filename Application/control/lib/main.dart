@@ -1,0 +1,390 @@
+import 'dart:convert';
+
+import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:flutter_xlider/flutter_xlider.dart';
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:control/chart.dart';
+
+void main() => runApp(const MyApp());
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    const title = 'WebSocket Demo';
+    return MaterialApp(
+      theme: ThemeData(brightness: Brightness.dark),
+      title: title,
+      home: MyHomePage(
+        title: title,
+      ),
+    );
+  }
+}
+
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({
+    super.key,
+    required this.title,
+  });
+
+  final String title;
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  final limitCount = 300;
+  final outputPoints = <FlSpot>[FlSpot(0, 0)];
+  final inputPoints = <FlSpot>[FlSpot(0, 0)];
+  final setpointPoints = <FlSpot>[FlSpot(0, 0)];
+  final f = NumberFormat("00.00", "en_US");
+  double P = 0;
+  double I = 0;
+  double D = 0;
+
+  double xValue = 0;
+  double step = 0.1;
+
+  final TextEditingController _controller =
+      TextEditingController(text: '192.168.24.157:81');
+  final TextEditingController _controllerP = TextEditingController(text: '1');
+  final TextEditingController _controllerI = TextEditingController(text: '2');
+  final TextEditingController _controllerD = TextEditingController(text: '0.1');
+  late WebSocketChannel _channel;
+
+  @override
+  void initState() {
+    _channel = WebSocketChannel.connect(
+      Uri.parse('ws://${_controller.text}'),
+    );
+    super.initState();
+  }
+
+  int slider = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Padding(
+        padding: const EdgeInsets.all(50),
+        child: Flex(
+          direction: Axis.horizontal,
+          children: [
+            Flexible(
+              flex: 4,
+              child: Card(
+                elevation: 3,
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(0, 30, 0, 30),
+                  child: StreamBuilder(
+                    stream: _channel.stream,
+                    builder: (context, snapshot) {
+                      Map<String, dynamic> dsd;
+                      if (snapshot.hasData) {
+                        Map<String, dynamic> dsd =
+                            jsonDecode(snapshot.data.toString())
+                                as Map<String, dynamic>;
+                        outputPoints
+                            .add(FlSpot(xValue, double.parse(dsd['Output'])));
+                        inputPoints
+                            .add(FlSpot(xValue, double.parse(dsd['Input'])));
+                        setpointPoints
+                            .add(FlSpot(xValue, double.parse(dsd['Setpoint'])));
+
+                        P = double.parse(dsd['P']);
+                        I = double.parse(dsd['I']);
+                        D = double.parse(dsd['D']);
+                      }
+                      if (outputPoints.length > limitCount) {
+                        outputPoints.removeAt(0);
+                        inputPoints.removeAt(0);
+                        setpointPoints.removeAt(0);
+                      }
+                      xValue += step;
+                      return Stack(
+                        alignment: Alignment.topCenter,
+                        children: [
+                          Text(
+                              "P: ${P}  |  I: ${I}  |  D: ${D}  |  Setpoint: ${f.format(setpointPoints.last.y)}  |  Input: ${f.format(inputPoints.last.y)}  |  Output: ${f.format(outputPoints.last.y)}"),
+                          LineChart(
+                            duration: Duration.zero,
+                            LineChartData(
+                              minY: 0,
+                              maxY: 30,
+                              minX: outputPoints.first.x,
+                              maxX: outputPoints.last.x,
+
+                              //lineTouchData: const LineTouchData(enabled: false),
+                              //clipData: const FlClipData.all(),
+                              // gridData: const FlGridData(
+                              //   show: true,
+                              //   drawVerticalLine: false,
+                              // ),
+                              borderData: FlBorderData(show: false),
+                              lineBarsData: [
+                                //outputLine(outputPoints),
+                                inputLine(inputPoints),
+                                setpointLine(setpointPoints),
+                              ],
+                              titlesData: const FlTitlesData(
+                                  bottomTitles: AxisTitles(
+                                      sideTitles:
+                                          SideTitles(showTitles: false)),
+                                  topTitles: AxisTitles(
+                                      sideTitles:
+                                          SideTitles(showTitles: false))),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+            Flexible(
+              flex: 1,
+              child: Flex(
+                direction: Axis.vertical,
+                children: [
+                  Flexible(
+                    flex: 2,
+                    child: Card(
+                      elevation: 3,
+                      child: Container(
+                        padding: const EdgeInsets.all(20),
+                        height: MediaQuery.of(context).size.height,
+                        child: Center(
+                          child: ListView(
+                            scrollDirection: Axis.vertical,
+                            shrinkWrap: true,
+                            children: [
+                              //Chart(),
+                              Column(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    SizedBox(
+                                      width: 250,
+                                      child: TextField(
+                                        decoration: const InputDecoration(
+                                            border: OutlineInputBorder(),
+                                            labelText: 'ESP IP'),
+                                        controller: _controller,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.center,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        FilledButton.tonal(
+                                          onPressed: () {
+                                            _channel.sink.close();
+                                            _channel = WebSocketChannel.connect(
+                                              Uri.parse(
+                                                  'ws://${_controller.text}'),
+                                            );
+                                            setState(() {});
+                                          },
+                                          child: const Text('Connect'),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        FilledButton.tonal(
+                                          onPressed: () {
+                                            _channel.sink.close();
+                                            setState(() {});
+                                          },
+                                          child: const Text('Disconnect'),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 10),
+                                    FutureBuilder(
+                                      future: _channel.ready,
+                                      builder: (context, snapshot) {
+                                        if (snapshot.connectionState ==
+                                            ConnectionState.waiting) {
+                                          return const Text(
+                                            "Connecting",
+                                            style:
+                                                TextStyle(color: Colors.amber),
+                                          );
+                                        } else if (snapshot.hasError == false) {
+                                          return const Text(
+                                            "Connected",
+                                            style:
+                                                TextStyle(color: Colors.green),
+                                          );
+                                        } else {
+                                          return const Text(
+                                            "Error",
+                                            style: TextStyle(color: Colors.red),
+                                          );
+                                        }
+                                      },
+                                    ),
+                                  ]),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Flexible(
+                      flex: 7,
+                      child: Card(
+                        elevation: 3,
+                        child: Center(
+                          child: Column(
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.all(20),
+                                child: Flex(
+                                    direction: Axis.horizontal,
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceEvenly,
+                                    children: [
+                                      Flexible(
+                                        flex: 1,
+                                        child: TextField(
+                                          decoration: const InputDecoration(
+                                              border: OutlineInputBorder(),
+                                              labelText: 'P'),
+                                          controller: _controllerP,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 15),
+                                      Flexible(
+                                        flex: 1,
+                                        child: TextField(
+                                          decoration: const InputDecoration(
+                                              border: OutlineInputBorder(),
+                                              labelText: 'I'),
+                                          controller: _controllerI,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 15),
+                                      Flexible(
+                                        flex: 1,
+                                        child: TextField(
+                                          decoration: const InputDecoration(
+                                              border: OutlineInputBorder(),
+                                              labelText: 'D'),
+                                          controller: _controllerD,
+                                        ),
+                                      ),
+                                    ]),
+                              ),
+                              SizedBox(
+                                height: 500,
+                                width: 50,
+                                child: FlutterSlider(
+                                  touchSize: 50,
+                                  values: const [50],
+                                  max: 100,
+                                  min: 0,
+                                  rtl: true,
+                                  tooltip: FlutterSliderTooltip(
+                                      direction:
+                                          FlutterSliderTooltipDirection.left),
+                                  handler: FlutterSliderHandler(opacity: 0),
+                                  trackBar: const FlutterSliderTrackBar(
+                                      activeTrackBarHeight: 50,
+                                      inactiveTrackBarHeight: 50),
+                                  axis: Axis.vertical,
+                                  onDragging:
+                                      (handlerIndex, lowerValue, upperValue) {
+                                    _channel.sink.add((lowerValue as double)
+                                            .toInt()
+                                            .toString() +
+                                        "," +
+                                        _controllerP.text +
+                                        "," +
+                                        _controllerI.text +
+                                        "," +
+                                        _controllerD.text);
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ))
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  LineChartBarData outputLine(List<FlSpot> points) {
+    return LineChartBarData(
+      spots: points,
+      dotData: const FlDotData(
+        show: false,
+      ),
+      // gradient: LinearGradient(
+      //   colors: [Colors.blueAccent, Colors.blueAccent],
+      //   stops: const [0.1, 1.0],
+      // ),
+      barWidth: 4,
+      isCurved: true,
+    );
+  }
+
+  LineChartBarData inputLine(List<FlSpot> points) {
+    return LineChartBarData(
+      spots: points,
+
+      dotData: const FlDotData(
+        show: false,
+      ),
+      color: Colors.pinkAccent,
+      // gradient: LinearGradient(
+      //   colors: [Colors.redAccent, Colors.redAccent],
+      //   stops: const [0.1, 1.0],
+      // ),
+      barWidth: 2,
+      isCurved: true,
+    );
+  }
+
+  LineChartBarData setpointLine(List<FlSpot> points) {
+    return LineChartBarData(
+      spots: points,
+      dotData: const FlDotData(
+        show: false,
+      ),
+      color: Colors.deepPurpleAccent,
+      // gradient: LinearGradient(
+      //   colors: [Colors.purpleAccent, Colors.purpleAccent],
+      //   stops: const [0.1, 1.0],
+      // ),
+      barWidth: 2,
+      isCurved: true,
+    );
+  }
+
+  @override
+  void dispose() {
+    _channel.sink.close();
+    _controller.dispose();
+    super.dispose();
+  }
+}
